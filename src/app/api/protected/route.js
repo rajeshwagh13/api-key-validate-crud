@@ -29,7 +29,7 @@ export async function POST(request) {
     // Check if the API key exists in the database
     const { data, error } = await supabase
       .from("api_keys")
-      .select("id, name, api_key_value")
+      .select("id, name, api_key_value, usage_count, monthly_limit")
       .eq("api_key_value", trimmedKey)
       .single();
 
@@ -55,12 +55,42 @@ export async function POST(request) {
       );
     }
 
+    // Check if monthly limit is exceeded
+    const currentUsage = data.usage_count || 0;
+    if (data.monthly_limit && currentUsage >= data.monthly_limit) {
+      return Response.json(
+        { 
+          success: false, 
+          valid: false, 
+          error: "API key monthly limit exceeded",
+          usageCount: currentUsage,
+          monthlyLimit: data.monthly_limit
+        },
+        { status: 429 }
+      );
+    }
+
+    // Increment the usage count
+    const { error: updateError } = await supabase
+      .from("api_keys")
+      .update({ 
+        usage_count: (data.usage_count || 0) + 1,
+        last_used: new Date().toISOString()
+      })
+      .eq("id", data.id);
+
+    if (updateError) {
+      console.error("Error updating usage count:", updateError);
+      // Don't fail the request, just log the error
+    }
+
     // API key is valid
     return Response.json({
       success: true,
       valid: true,
       message: "Valid API key, /protected can be accessed",
       keyName: data.name,
+      usageCount: (data.usage_count || 0) + 1,
     });
   } catch (error) {
     console.error("Error in protected route:", error);
